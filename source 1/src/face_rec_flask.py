@@ -18,10 +18,11 @@ import cv2
 import collections
 from sklearn.svm import SVC
 import base64
-from confluent_kafka import Consumer, KafkaError
+from confluent_kafka import Consumer, Producer, KafkaError
 import threading
 import time
 from datetime import datetime
+import json
 
 MINSIZE = 20
 THRESHOLD = [0.6, 0.7, 0.7]
@@ -72,11 +73,45 @@ CORS(app)
 KAFKA_BROKER = "172.20.66.139:9092"
 KAFKA_TOPIC = "device-subscribe"
 KAFKA_GROUP_ID = "face-recognition-consumer"
+KAFKA_RESULT_TOPIC = "recognition-result"
 
 # Global dictionary to reassemble chunks: {file_id: {metadata, chunks}}
 chunks_buffer = {}
 CHUNK_TIMEOUT = 60  # seconds
 
+# ============= Kafka Producer =============
+producer_config = {
+    'bootstrap.servers': KAFKA_BROKER,
+    'security.protocol': 'PLAINTEXT',
+}
+kafka_producer = Producer(producer_config)
+
+
+def send_result_to_kafka(file_id, person_label, filename, recognized_name):
+    """
+    Publish recognition result to Kafka topic 'recognition-result'
+    """
+    try:
+        result = {
+            'file_id': file_id,
+            'filename': filename,
+            'person_label': person_label,
+            'recognized_name': recognized_name,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        kafka_producer.produce(
+            KAFKA_RESULT_TOPIC,
+            key=file_id.encode(),
+            value=json.dumps(result).encode(),
+            callback=lambda err, msg: print(
+                f"[Producer] Result sent: {result['filename']} -> {recognized_name}" 
+                if not err else f"[Producer] Error: {err}"
+            )
+        )
+        kafka_producer.poll(0)
+    except Exception as e:
+        print(f"[Producer] Error sending result: {e}")
 
 def recognize_face(frame):
     """
@@ -205,7 +240,8 @@ def kafka_consumer_thread():
                         log_msg = f"[{timestamp}] File: {filename} | Person (label): {person} | Recognized: {recognized_name}"
                         print(log_msg)
                         
-                        # TODO: Send result back to Kafka (not implemented yet)
+                        # Send result back to Kafka
+                        send_result_to_kafka(file_id, person, filename, recognized_name)
                         
                     else:
                         print(f"[Kafka Consumer] Failed to decode image for file_id: {file_id}")
