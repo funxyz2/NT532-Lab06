@@ -1,0 +1,30 @@
+# Secret-bearing environment files. Keep templates readable.
+/.env
+/.env.*
+!/.env.example
+!/.env.template
+!/.env.sample
+
+# Virtualenv — heavy TF1 stack, not needed for code questions
+/.venv/**
+**/.venv/**
+
+# source 1: large binary FaceNet model artifacts (~225M, .pb/.ckpt/.pkl)
+/source 1/Models/**
+
+# source 1: raw photos + aligned crops + MTCNN logs (~85M) — data, not code
+/source 1/Dataset/**
+
+# source 1: MTCNN network weights (binary .npy, loaded at runtime)
+/source 1/src/align/det*.npy
+
+# Python bytecode caches
+/__pycache__/**
+**/__pycache__/**
+*.pyc
+
+# source 2: runtime artifact written by recognize.py on every frame
+/source 2/PROCESSED.png
+
+# macOS junk
+.DS_Store

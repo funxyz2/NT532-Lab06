@@ -1,0 +1,10 @@
+# Secret-bearing environment files. Keep templates readable.
+/.env
+/.env.*
+!/.env.example
+!/.env.template
+!/.env.sample
+
+# Python bytecode cache (generated when demo scripts run)
+/__pycache__/**
+*.pyc
