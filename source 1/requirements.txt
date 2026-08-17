@@ -8,3 +8,7 @@ Pillow
 requests
 psutil
 imageio
+flask
+flask_cors
+numpy
+confluent-kafka
