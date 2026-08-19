@@ -15,14 +15,18 @@ services:
     platform: linux/arm64
     container_name: kafka
     ports:
-      - "9092:9092"
+      # Local listener: only on the broker machine itself.
+      - "127.0.0.1:9092:9092"
+      # External listener: all interfaces; Kafka advertises the Tailscale IP
+      # so remote clients in the tailnet connect through 100.108.66.112:9093.
       - "9093:9093"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092"
-      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://127.0.0.1:9092"
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT"
+      KAFKA_LISTENERS: "LOCAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:9093"
+      KAFKA_ADVERTISED_LISTENERS: "LOCAL://127.0.0.1:9092,EXTERNAL://100.108.66.112:9093"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "LOCAL:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: LOCAL
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
     depends_on:
       - zookeeper
