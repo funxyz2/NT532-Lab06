@@ -30,7 +30,7 @@ python app.py --source rtsp://127.0.0.1:8554/stream \
 - `src/align/detect_face.py` + `det1/2/3.npy` — MTCNN face detection (numpy weights, `create_mtcnn(sess, "src/align")`)
 - `src/align_dataset_mtcnn.py` — pipeline: `Dataset/raw/<person>/images` → aligned crops in `Dataset/processed/<person>/`
 - `src/classifier.py` — modes `TRAIN` (fit `SVC(kernel='linear', probability=True)` on embeddings, pickle `(model, class_names)` to .pkl) / `CLASSIFY` (eval)
-- `src/face_rec_flask.py` — loads SVM + FaceNet graph **at import time**; `POST /recog` (form fields: `image` base64, `w`, `h`) → returns person name or `"Unknown"` if top prob ≤ 0.5. CORS enabled, 100MB form limits.
+- `src/face_rec_flask.py` — loads SVM + FaceNet graph **at import time**; `POST /recog` (form fields: `image` base64, `w`, `h`) → returns person name or `"Unknown"` if top prob ≤ 0.5. CORS enabled, 100MB form limits. Also runs a Kafka consumer on `device-subscribe`: reassembles 512 KiB chunks, converts the frame BGR→RGB once (consistent with `app.py`; `None` frames yield an empty result), recognizes **all** faces via `recognize_faces()` (returns `{recognized_name, probability, bbox: [x1,y1,x2,y2]}` per face, box clipped to frame), and publishes `recognition-result` with `file_id`, `filename`, `person_label`, `recognized_name` (first face), `faces`, `frame_size`, `timestamp`. `recognize_face()` wrapper keeps `/recog` returning only the first face's name.
 - `src/models/` — network defs: `inception_resnet_v1/v2`, `squeezenet`, `dummy`
 - `src/generative/` — DFC-VAE: `train_vae.py`, `calculate_attribute_vectors.py`, `modify_attribute.py`; VAE defs in `src/generative/models/` (`dfc_vae`, `dfc_vae_resnet`, `dfc_vae_large`, `vae_base`) loaded via `importlib.import_module(args.vae_def)`
 - `app.py` (root) — live pipeline: RTSP in → MTCNN detect (every N frames) → FaceNet embed → SVM classify → draw + publish. Same model files as the flask server. Details:
@@ -44,7 +44,7 @@ python app.py --source rtsp://127.0.0.1:8554/stream \
 ## Testing quirks
 - No test suite. "Testing" = `classifier.py CLASSIFY` eval accuracy printout, or `client.py`'s summary against the flask server.
 - Known bug (upstream): `classifier.py:59` `assert(len(cls.image_paths)>0, '...')` is a tuple, never fails — keep as-is, matches upstream.
-- `face_rec_flask.py:85` uses deprecated `np.frombuffer`/`np.fromstring`; server returns the first recognized face's name only (loop keeps overwriting `name`).
+- `face_rec_flask.py:85` uses deprecated `np.frombuffer`/`np.fromstring`; Flask `/recog` returns the first recognized face's name only (via `recognize_face()`), while the Kafka path returns every face with bbox in `faces`.
 - Upstream junk: 2-byte placeholder files named `a` in `src/align/`, `src/models/`, `src/generative/`, `src/generative/models/` — ignore them.
 
 ## Conventions

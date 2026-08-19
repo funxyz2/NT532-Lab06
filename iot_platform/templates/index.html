@@ -37,13 +37,19 @@
     <section class="card"><h2>Thống kê</h2><table><thead><tr><th>Sinh viên</th><th>Phòng</th><th>Loại</th><th>Số lần</th></tr></thead><tbody id="summary"></tbody></table></section>
   </main>
   <script>
+    function formatTimestamp(iso) {
+      const d = new Date(iso);
+      if (isNaN(d)) return iso;
+      const pad = n => String(n).padStart(2, '0');
+      return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
+    }
     async function loadAttendance() {
       const params = new URLSearchParams({limit: 100});
       if (student.value) params.set('student_name', student.value);
       if (room.value) params.set('room_id', room.value);
       const response = await fetch('/api/attendance?' + params);
       const data = await response.json();
-      attendance.innerHTML = data.items.map(row => `<tr><td>${row.timestamp}</td><td>${row.student_name}</td><td>${row.room_id}</td><td>${row.device_id}</td><td>${row.check_type}</td></tr>`).join('');
+      attendance.innerHTML = data.items.map(row => `<tr><td>${formatTimestamp(row.timestamp)}</td><td>${row.student_name}</td><td>${row.room_id}</td><td>${row.device_id}</td><td>${row.check_type}</td></tr>`).join('');
       status.textContent = `${data.count} bản ghi`;
       const summaryResponse = await fetch('/api/attendance/summary');
       const summaryData = await summaryResponse.json();

@@ -20,10 +20,10 @@ Edge Server
   - FaceNet tạo embedding
   - SVM nhận diện sinh viên
         |
-        | JSON qua Kafka topic `recognition_result`
+        | JSON qua Kafka topic `recognition-result`
         v
 IoT Platform
-  - kafka_consumer.py đọc JSON
+  - app.py đọc JSON qua thread consumer ngầm
   - app.py kiểm tra dữ liệu
   - SQLite lưu attendance
         |
@@ -41,7 +41,7 @@ bị cần có `device_id` để phân biệt nguồn gửi và `room_id` để 
 Kafka làm lớp trung gian truyền message:
 
 - `send_image`: ảnh từ IoT Device đến Edge Server.
-- `recognition_result`: kết quả nhận diện từ Edge Server đến IoT Platform.
+- `recognition-result`: kết quả nhận diện từ Edge Server đến IoT Platform.
 - Có thể dùng thêm topic riêng để gửi kết quả ngược về thiết bị.
 
 ### 3. Edge Server
@@ -59,8 +59,28 @@ gửi sang platform phải là JSON, không phải JPEG thô:
 }
 ```
 
-`iot_platform/kafka_consumer.py` subscribe topic `recognition_result`, kiểm tra
-các trường bắt buộc rồi gọi logic lưu dữ liệu dùng chung với Flask API.
+`iot_platform/app.py` subscribe topic `recognition-result` (topic mà
+Edge Server `source 1/src/face_rec_flask.py` publish) qua một daemon thread
+trong cùng tiến trình và map kết quả nhận diện thành bản ghi điểm danh:
+
+- `recognized_name` → `student_name` (kết quả `"Unknown"` bị bỏ qua).
+- `person_label` → `device_id`.
+- `timestamp` → `timestamp` (hiển thị dạng `h:m:s d/m/y` trên dashboard).
+- `room_id` lấy từ message, nếu không có dùng biến môi trường `ROOM_ID`
+  (mặc định `LAB-06`).
+- `check_type` mặc định `check-in`.
+
+Chỉ xác nhận check-in sau khi nhận diện **3 lần liên tiếp** cùng một sinh viên
+(`ATTENDANCE_CONFIRM_COUNT`); kết quả `Unknown` hoặc sinh viên khác làm đứt
+chuỗi. Sau khi check-in, sinh viên được giữ trạng thái đã điểm danh trong
+`ATTENDANCE_TTL_SECONDS` (mặc định 300 giây = 5 phút) — không tạo bản ghi trùng;
+hết TTL mới cần một chuỗi 3 lần nhận diện liên tiếp khác để điểm danh lại.
+Trạng thái xác nhận nằm trong bộ nhớ tiến trình (mất khi restart app).
+
+Message đã có sẵn schema đầy đủ (`room_id`, `student_name`, `device_id`,
+`check_type`) sẽ được lưu nguyên như cũ. Không cần chạy consumer riêng;
+đặt `KAFKA_CONSUMER_ENABLED=false` nếu chỉ muốn API. `kafka_consumer.py`
+chỉ là wrapper standalone dùng khi cần debug.
 
 ### 4. Database
 
@@ -91,7 +111,7 @@ GET  /health                   Kiểm tra service
 - SQLite lưu dữ liệu bền vững trong `data/attendance.db`.
 - Dashboard tại `/`.
 - Thống kê theo sinh viên, phòng và tháng.
-- Kafka consumer tùy chọn đọc JSON từ topic `recognition_result`.
+- Kafka consumer chạy ngầm trong app đọc JSON từ topic `recognition-result`.
 
 ## Chạy local trên Windows
 
@@ -159,7 +179,9 @@ Dashboard vẫn truy cập tại <http://127.0.0.1:5000>.
 
 ## Kafka consumer
 
-Consumer đọc topic `recognition_result` và chấp nhận JSON dạng:
+Consumer đọc topic `recognition-result` và chấp nhận JSON dạng Edge Server
+`source 1` publish (xem mục "IoT Platform hoạt động như thế nào" ở trên), hoặc
+bản ghi điểm danh đầy đủ:
 
 ```json
 {
@@ -171,15 +193,11 @@ Consumer đọc topic `recognition_result` và chấp nhận JSON dạng:
 }
 ```
 
-Chạy consumer sau khi API đang chạy:
+Chạy API + consumer (consumer chạy ngầm trong app):
 
 ```bash
-python kafka_consumer.py
+python app.py
 ```
-
-`source 2/recognize.py` hiện đang gửi JPEG thô vào `receive_result`, chưa phải
-JSON nhận diện. Vì vậy cần sửa Edge Server để publish message JSON như mẫu trên
-trước khi bật consumer này.
 
 ## Checklist hoàn thiện Lab06
 

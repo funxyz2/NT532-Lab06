@@ -70,7 +70,7 @@ CORS(app)
 
 
 # ============= Kafka Consumer Configuration =============
-KAFKA_BROKER = "172.20.66.139:9092"
+KAFKA_BROKER = "127.0.0.1:9092"
 KAFKA_TOPIC = "device-subscribe"
 KAFKA_GROUP_ID = "face-recognition-consumer"
 KAFKA_RESULT_TOPIC = "recognition-result"
@@ -87,7 +87,7 @@ producer_config = {
 kafka_producer = Producer(producer_config)
 
 
-def send_result_to_kafka(file_id, person_label, filename, recognized_name):
+def send_result_to_kafka(file_id, person_label, filename, recognized_name, faces, frame_size):
     """
     Publish recognition result to Kafka topic 'recognition-result'
     """
@@ -97,6 +97,8 @@ def send_result_to_kafka(file_id, person_label, filename, recognized_name):
             'filename': filename,
             'person_label': person_label,
             'recognized_name': recognized_name,
+            'faces': faces,
+            'frame_size': frame_size,
             'timestamp': datetime.now().isoformat()
         }
         
@@ -113,48 +115,76 @@ def send_result_to_kafka(file_id, person_label, filename, recognized_name):
     except Exception as e:
         print(f"[Producer] Error sending result: {e}")
 
+def recognize_faces(frame):
+    """
+    Recognize all faces in a frame.
+    Returns: list of {"recognized_name", "probability", "bbox": [x1, y1, x2, y2]}
+    """
+    if frame is None:
+        return []
+
+    frame_height, frame_width = frame.shape[:2]
+    # MTCNN/FaceNet were trained on RGB; mirror the color handling in source 1/app.py.
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+    try:
+        bounding_boxes, _ = align.detect_face.detect_face(rgb_frame, MINSIZE, pnet, rnet, onet, THRESHOLD, FACTOR)
+    except Exception as e:
+        print(f"Error in recognize_faces: {e}")
+        return []
+
+    faces = []
+
+    for row in bounding_boxes:
+        x1, y1, x2, y2 = [int(coord) for coord in row[:4]]
+        x1 = max(0, min(frame_width, x1))
+        y1 = max(0, min(frame_height, y1))
+        x2 = max(0, min(frame_width, x2))
+        y2 = max(0, min(frame_height, y2))
+
+        if x1 >= x2 or y1 >= y2:
+            continue
+
+        try:
+            cropped = rgb_frame[y1:y2, x1:x2, :]
+            scaled = cv2.resize(cropped, (INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE),
+                                interpolation=cv2.INTER_CUBIC)
+            scaled = facenet.prewhiten(scaled)
+            scaled_reshape = scaled.reshape(-1, INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE, 3)
+            feed_dict = {images_placeholder: scaled_reshape, phase_train_placeholder: False}
+            emb_array = sess.run(embeddings, feed_dict=feed_dict)
+            predictions = model.predict_proba(emb_array)
+            best_class_indices = np.argmax(predictions, axis=1)
+            best_class_probabilities = predictions[
+                np.arange(len(best_class_indices)), best_class_indices]
+            probability = float(best_class_probabilities[0])
+
+            if probability > 0.5:
+                name = class_names[best_class_indices[0]]
+            else:
+                name = "Unknown"
+
+            faces.append({
+                "recognized_name": name,
+                "probability": round(probability, 4),
+                "bbox": [x1, y1, x2, y2],
+            })
+        except Exception as e:
+            print(f"Error recognizing face: {e}")
+            continue
+
+    return faces
+
+
 def recognize_face(frame):
     """
-    Recognize faces in a frame
+    Recognize faces in a frame.
     Returns: name (recognized person or "Unknown")
     """
-    try:
-        bounding_boxes, _ = align.detect_face.detect_face(frame, MINSIZE, pnet, rnet, onet, THRESHOLD, FACTOR)
-
-        faces_found = bounding_boxes.shape[0]
-
-        if faces_found > 0:
-            det = bounding_boxes[:, 0:4]
-            bb = np.zeros((faces_found, 4), dtype=np.int32)
-            for i in range(faces_found):
-                bb[i][0] = det[i][0]
-                bb[i][1] = det[i][1]
-                bb[i][2] = det[i][2]
-                bb[i][3] = det[i][3]
-
-                cropped = frame[bb[i][1]:bb[i][3], bb[i][0]:bb[i][2], :]
-                scaled = cv2.resize(cropped, (INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE),
-                                    interpolation=cv2.INTER_CUBIC)
-                scaled = facenet.prewhiten(scaled)
-                scaled_reshape = scaled.reshape(-1, INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE, 3)
-                feed_dict = {images_placeholder: scaled_reshape, phase_train_placeholder: False}
-                emb_array = sess.run(embeddings, feed_dict=feed_dict)
-                predictions = model.predict_proba(emb_array)
-                best_class_indices = np.argmax(predictions, axis=1)
-                best_class_probabilities = predictions[
-                    np.arange(len(best_class_indices)), best_class_indices]
-
-                if best_class_probabilities > 0.5:
-                    name = class_names[best_class_indices[0]]
-                else:
-                    name = "Unknown"
-                
-                return name
-        else:
-            return "Unknown"
-    except Exception as e:
-        print(f"Error in recognize_face: {e}")
-        return "Unknown"
+    faces = recognize_faces(frame)
+    if faces:
+        return faces[0]["recognized_name"]
+    return "Unknown"
 
 
 def kafka_consumer_thread():
@@ -234,14 +264,22 @@ def kafka_consumer_thread():
                     
                     if frame is not None:
                         # Run face recognition
-                        recognized_name = recognize_face(frame)
+                        faces = recognize_faces(frame)
+                        recognized_name = faces[0]["recognized_name"] if faces else "Unknown"
                         
                         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                         log_msg = f"[{timestamp}] File: {filename} | Person (label): {person} | Recognized: {recognized_name}"
                         print(log_msg)
                         
                         # Send result back to Kafka
-                        send_result_to_kafka(file_id, person, filename, recognized_name)
+                        send_result_to_kafka(
+                            file_id,
+                            person,
+                            filename,
+                            recognized_name,
+                            faces,
+                            [frame.shape[1], frame.shape[0]],
+                        )
                         
                     else:
                         print(f"[Kafka Consumer] Failed to decode image for file_id: {file_id}")

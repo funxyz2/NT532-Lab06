@@ -1,3 +1,4 @@
+import logging
 import os
 import sqlite3
 from datetime import datetime, timezone
@@ -5,6 +6,8 @@ from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request
 
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 BASE_DIR = Path(__file__).resolve().parent
 DATABASE_PATH = Path(os.getenv("DATABASE_PATH", BASE_DIR / "data" / "attendance.db"))
@@ -164,4 +167,16 @@ init_db()
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=False)
+    # Run the attendance Kafka consumer in the same process by default;
+    # disable with KAFKA_CONSUMER_ENABLED=false for API-only mode.
+    if os.getenv("KAFKA_CONSUMER_ENABLED", "true").lower() not in ("0", "false", "no"):
+        from attendance_kafka import start_consumer_thread
+
+        start_consumer_thread()
+
+    app.run(
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", "5000")),
+        debug=False,
+        use_reloader=False,
+    )

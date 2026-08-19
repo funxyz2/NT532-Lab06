@@ -1,35 +1,25 @@
-import json
 import logging
-import os
+import threading
 
-from kafka import KafkaConsumer
-
-from app import insert_record, validate_record
+from attendance_kafka import consume_forever
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 
 def main():
-    servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092").split(",")
-    topic = os.getenv("KAFKA_TOPIC", "recognition_result")
-    group_id = os.getenv("KAFKA_GROUP_ID", "iot-platform")
-    consumer = KafkaConsumer(
-        topic,
-        bootstrap_servers=servers,
-        group_id=group_id,
-        auto_offset_reset="latest",
-        enable_auto_commit=True,
-        value_deserializer=lambda value: json.loads(value.decode("utf-8")),
-    )
-    logging.info("Listening to Kafka topic %s at %s", topic, ",".join(servers))
-    for message in consumer:
-        try:
-            record = validate_record(message.value)
-            record_id = insert_record(record)
-            logging.info("Stored attendance id=%s student=%s", record_id, record["student_name"])
-        except (ValueError, TypeError, json.JSONDecodeError) as error:
-            logging.warning("Skipped invalid Kafka message: %s", error)
+    """
+    Optional standalone attendance consumer.
+
+    Normally the consumer runs inside `app.py` as a background thread;
+    this script only exists for debugging/isolated runs.
+    """
+    stop_event = threading.Event()
+    try:
+        consume_forever(stop_event)
+    except KeyboardInterrupt:
+        stop_event.set()
+        print("\nConsumer stopped")
 
 
 if __name__ == "__main__":
